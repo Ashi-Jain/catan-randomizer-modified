@@ -269,23 +269,28 @@ CatanMap.prototype.defineMap = function(mapDefinition) {
 		console.log("Invalid map definition.");
 	}
 }
-CatanMap.prototype.generate = function() {
-	
-	if (this.mapDefinition) {
-		
+CatanMap.prototype.generate = function () {
+	if (!this.mapDefinition) {
+		console.log("No map definition.");
+		return;
+	}
+
+	const maxGlobalAttempts = 1000;
+	let globalAttempts = 0;
+
+	while (globalAttempts < maxGlobalAttempts) {
 		this.hexTiles = [];
-		
+
 		var numTiles = this.mapDefinition.coordinatesArray.length;
-		
 		var tileCoordinates = this.mapDefinition.coordinatesArray.copy();
-		
+
 		var tileNumbers = [];
 		for (var key in this.mapDefinition.numberDict) {
 			for (var i = 0; i < this.mapDefinition.numberDict[key]; i += 1) {
 				tileNumbers.push(parseInt(key));
 			}
 		}
-		
+
 		var tileTypes = [];
 		for (var key in this.mapDefinition.resourceDict) {
 			if (key != "desert") {
@@ -297,14 +302,12 @@ CatanMap.prototype.generate = function() {
 		
 		var newCoords = null;
 		var numDeserts = this.mapDefinition.resourceDict["desert"];
-		
-		for (var i = 0; i < numDeserts; i += 1) {
-			var desertHexTile = new HexTile();
-			newCoords = tileCoordinates.random(true);
-			desertHexTile.setCoordinate.apply(
-				desertHexTile,
-				newCoords
-			);
+
+
+		for (let i = 0; i < numDeserts; i++) {
+			let desertHexTile = new HexTile();
+			let newCoords = tileCoordinates.random(true);
+			desertHexTile.setCoordinate(...newCoords);
 			desertHexTile.setResourceType("desert");
 			this.hexTiles.push(desertHexTile);
 			this.coordToTile[newCoords.toString()] = desertHexTile;
@@ -320,47 +323,55 @@ CatanMap.prototype.generate = function() {
 		for (var i = 0; i < highlyProductiveIdx.length; i += 1) {
 			tileNumbers.swap(i,highlyProductiveIdx[i]);
 		}
-		
-		// Handle all other tiles
-		for (var i = 0; i < (numTiles - numDeserts); i += 1) {
-			
+
+		let success = true;
+
+		for (var i = 0; i < (numTiles - numDeserts); i++) {
 			var newHexTile = new HexTile();
 			newHexTile.setNumber(tileNumbers[i]);
 			newHexTile.setResourceType(tileTypes.random(true));
 
-			var invalid;
-			
-			if ( newHexTile.isHighlyProductive() ) {
-				var tmpCoords = [];
-				do {
-					newCoords = tileCoordinates.random(true);
-					newHexTile.setCoordinate.apply(
-						newHexTile,
-						newCoords
-					);
-					invalid = this.hasHighlyProductiveNeighbors(newHexTile);
-					if (invalid) {
-						tmpCoords.push(newCoords);
-					}
-				} while ( invalid );
-				tileCoordinates = tileCoordinates.concat(tmpCoords);
-			} else {
-				newCoords = tileCoordinates.random(true);
-				newHexTile.setCoordinate.apply(
-					newHexTile,
-					newCoords
-				);
+			let placed = false;
+			let attempts = 0;
+			let maxAttempts = 100;
+
+			while (!placed && attempts < maxAttempts) {
+				let newCoords = tileCoordinates.random(true);
+				newHexTile.setCoordinate(...newCoords);
+
+				let invalid = false;
+
+				if (this.hasClayWoodConflict(newHexTile)) {
+					invalid = true;
+				}
+
+				if (!invalid) {
+					this.hexTiles.push(newHexTile);
+					this.coordToTile[newCoords.toString()] = newHexTile;
+					placed = true;
+				} else {
+					tileCoordinates.push(newCoords);
+					attempts++;
+				}
 			}
-			
-			this.hexTiles.push(newHexTile);
-			this.coordToTile[newCoords.toString()] = newHexTile;
-		} // end for loop
-		
-	} else {
-		console.log("No map definition.");
+
+			if (!placed) {
+				success = false;
+				break;
+			}
+		}
+
+		if (success) {
+			return;
+		}
+
+		globalAttempts++;
 	}
-	
-}
+
+	console.error("Failed to generate valid map after many attempts.");
+};
+
+
 CatanMap.prototype.draw = function() {
 
 	if (this.hexTiles) {
@@ -407,6 +418,22 @@ CatanMap.prototype.getAdjacentTiles = function(tile) {
 	return adjTiles;
 	
 }
+
+CatanMap.prototype.hasClayWoodConflict = function(tile) {
+	const adjacent = this.getAdjacentTiles(tile);
+	for (let adj of adjacent) {
+		const res1 = tile.resourceType;
+		const res2 = adj.resourceType;
+		if (
+			(res1 === "wood" && res2 === "clay") ||
+			(res1 === "clay" && res2 === "wood")
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
 CatanMap.prototype.hasHighlyProductiveNeighbors = function(tile) {
 	var adjacentTiles = this.getAdjacentTiles(tile);
 	for (var i = 0; i < adjacentTiles.length; i += 1) {
