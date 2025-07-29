@@ -301,17 +301,41 @@ CatanMap.prototype.generate = function () {
 		}
 		
 		var newCoords = null;
-		var numDeserts = this.mapDefinition.resourceDict["desert"];
+        var numDeserts = this.mapDefinition.resourceDict["desert"];
 
+        // Always place desert at [6,0] for expanded map
+        let fixedDesertCoord = null;
+        if (this.mapDefinition === expandedMap) {
+            fixedDesertCoord = [6, 0];
+        }
+		else if (this.mapDefinition === normalMap) {
+            fixedDesertCoord = [0, 0];
+        }
 
-		for (let i = 0; i < numDeserts; i++) {
-			let desertHexTile = new HexTile();
-			let newCoords = tileCoordinates.random(true);
-			desertHexTile.setCoordinate(...newCoords);
-			desertHexTile.setResourceType("desert");
-			this.hexTiles.push(desertHexTile);
-			this.coordToTile[newCoords.toString()] = desertHexTile;
-		}
+        for (let i = 0; i < numDeserts; i++) {
+            let desertHexTile = new HexTile();
+            let desertCoord;
+            if (fixedDesertCoord) {
+                // Remove fixed coord from tileCoordinates and use it
+                let idx = tileCoordinates.findIndex(
+                    coord => coord[0] === fixedDesertCoord[0] && coord[1] === fixedDesertCoord[1]
+                );
+                if (idx !== -1) {
+                    desertCoord = tileCoordinates.splice(idx, 1)[0];
+                } else {
+                    // fallback if not found
+                    desertCoord = tileCoordinates.random(true);
+                }
+                // Only do this for the first desert
+                fixedDesertCoord = null;
+            } else {
+                desertCoord = tileCoordinates.random(true);
+            }
+            desertHexTile.setCoordinate(...desertCoord);
+            desertHexTile.setResourceType("desert");
+            this.hexTiles.push(desertHexTile);
+            this.coordToTile[desertCoord.toString()] = desertHexTile;
+        }
 		
 		// Move all highly productive tile number (6 and 8) to the front
 		// of the tileNumbers array
@@ -343,6 +367,29 @@ CatanMap.prototype.generate = function () {
 
 				if (this.hasClayWoodConflict(newHexTile)) {
 					invalid = true;
+				}
+
+				// Prevent wood and clay from having the same number
+				if (this.mapDefinition === normalMap) {
+					if (this.hasGlobalWoodClayNumberConflict(newHexTile, newHexTile.number)) {
+						invalid = true;
+					}
+				}
+				else if( this.mapDefinition === expandedMap) {
+					if (this.hasAdjacentWoodClayNumberConflict(newHexTile, newHexTile.number)) {
+						invalid = true;
+					}
+				}
+				// Prevent grain and ore from having the same number
+				if (this.mapDefinition === normalMap) {
+					if (this.hasGlobalGrainOreNumberConflict(newHexTile, newHexTile.number)) {
+						invalid = true;
+					}
+				}
+				else if( this.mapDefinition === expandedMap) {
+					if (this.hasAdjacentGrainOreNumberConflict(newHexTile, newHexTile.number)) {
+						invalid = true;
+					}
 				}
 
 				if (!invalid) {
@@ -432,6 +479,60 @@ CatanMap.prototype.hasClayWoodConflict = function(tile) {
 		}
 	}
 	return false;
+}
+
+CatanMap.prototype.hasAdjacentWoodClayNumberConflict = function(tile, number) {
+    if (tile.resourceType !== "wood" && tile.resourceType !== "clay") return false;
+    const adjacent = this.getAdjacentTiles(tile);
+    for (let adj of adjacent) {
+        if (
+            (adj.resourceType === "wood" || adj.resourceType === "clay") &&
+            adj.number === number
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+CatanMap.prototype.hasGlobalWoodClayNumberConflict = function(tile, number) {
+    if (tile.resourceType !== "wood" && tile.resourceType !== "clay") return false;
+    for (let t of this.hexTiles) {
+        if (
+            (t.resourceType === "wood" || t.resourceType === "clay") &&
+            t.number === number
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+CatanMap.prototype.hasAdjacentGrainOreNumberConflict = function(tile, number) {
+    if (tile.resourceType !== "grain" && tile.resourceType !== "ore") return false;
+    const adjacent = this.getAdjacentTiles(tile);
+    for (let adj of adjacent) {
+        if (
+            (adj.resourceType === "grain" || adj.resourceType === "ore") &&
+            adj.number === number
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+CatanMap.prototype.hasGlobalGrainOreNumberConflict = function(tile, number) {
+    if (tile.resourceType !== "grain" && tile.resourceType !== "ore") return false;
+    for (let t of this.hexTiles) {
+        if (
+            (t.resourceType === "grain" || t.resourceType === "ores") &&
+            t.number === number
+        ) {
+            return true;
+        }
+    }
+    return false;
 }
 
 CatanMap.prototype.hasHighlyProductiveNeighbors = function(tile) {
