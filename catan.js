@@ -135,6 +135,18 @@ function init() {
 	
 	addCanvas();
 	
+	// Dark mode toggle logic (use .click instead of .on)
+    $('#dark-mode-toggle').click(function() {
+        $('body').toggleClass('dark-mode');
+        $('#content-left').toggleClass('dark-mode');
+        $('#content-right').toggleClass('dark-mode');
+        // Toggle button text/icon
+        if ($('body').hasClass('dark-mode')) {
+            $('#dark-mode-toggle').html('☀️ Light Mode');
+        } else {
+            $('#dark-mode-toggle').html('🌙 Dark Mode');
+        }
+    });
 }
 
 function preloadImages(arr, callback){
