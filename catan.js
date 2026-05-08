@@ -306,6 +306,21 @@ CatanMap.prototype.defineMap = function (mapDefinition) {
     console.log("Invalid map definition.");
   }
 };
+
+CatanMap.prototype.countSameResourceNeighbors = function (tile) {
+  const adjacent = this.getAdjacentTiles(tile);
+
+  let count = 0;
+
+  for (let adj of adjacent) {
+    if (adj.resourceType === tile.resourceType) {
+      count++;
+    }
+  }
+
+  return count;
+};
+
 CatanMap.prototype.generate = function () {
   if (!this.mapDefinition) {
     console.log("No map definition.");
@@ -355,7 +370,8 @@ CatanMap.prototype.generate = function () {
         // Remove fixed coord from tileCoordinates and use it
         let idx = tileCoordinates.findIndex(
           (coord) =>
-            coord[0] === fixedDesertCoord[0] && coord[1] === fixedDesertCoord[1]
+            coord[0] === fixedDesertCoord[0] &&
+            coord[1] === fixedDesertCoord[1],
         );
         if (idx !== -1) {
           desertCoord = tileCoordinates.splice(idx, 1)[0];
@@ -379,7 +395,7 @@ CatanMap.prototype.generate = function () {
     var highlyProductiveIdx = [];
     highlyProductiveIdx = highlyProductiveIdx.concat(
       tileNumbers.indexOfArray(6),
-      tileNumbers.indexOfArray(8)
+      tileNumbers.indexOfArray(8),
     );
     for (var i = 0; i < highlyProductiveIdx.length; i += 1) {
       tileNumbers.swap(i, highlyProductiveIdx[i]);
@@ -390,7 +406,6 @@ CatanMap.prototype.generate = function () {
     for (var i = 0; i < numTiles - numDeserts; i++) {
       var newHexTile = new HexTile();
       newHexTile.setNumber(tileNumbers[i]);
-      newHexTile.setResourceType(tileTypes.random(true));
 
       let placed = false;
       let attempts = 0;
@@ -400,54 +415,66 @@ CatanMap.prototype.generate = function () {
         let newCoords = tileCoordinates.random(true);
         newHexTile.setCoordinate(...newCoords);
 
+        let bestResource = null;
+        let minSameNeighbors = Infinity;
+        let bestIndex = -1;
+
+        // Try few options
+        for (let i = 0; i < 6; i++) {
+          let randIndex = Math.floor(Math.random() * tileTypes.length);
+          let tempType = tileTypes[randIndex];
+
+          newHexTile.setResourceType(tempType);
+
+          // skip bad options immediately
+          if (this.hasDenseResourceCluster(newHexTile)) continue;
+
+          let sameNeighbors = this.countSameResourceNeighbors(newHexTile);
+
+          if (sameNeighbors < minSameNeighbors) {
+            minSameNeighbors = sameNeighbors;
+            bestResource = tempType;
+            bestIndex = randIndex;
+          }
+        }
+
+        // Apply best choice
+        newHexTile.setResourceType(bestResource);
+
         let invalid = false;
 
+        // Prevent wood/clay adjacent placement
         if (this.hasClayWoodConflict(newHexTile)) {
           invalid = true;
         }
 
-        // Prevent wood and clay from having the same number
-        if (this.mapDefinition === normalMap) {
-          if (
-            this.hasGlobalWoodClayNumberConflict(newHexTile, newHexTile.number)
-          ) {
-            invalid = true;
-          }
-        } else if (this.mapDefinition === expandedMap) {
-          if (
-            this.hasAdjacentWoodClayNumberConflict(
-              newHexTile,
-              newHexTile.number
-            )
-          ) {
-            invalid = true;
-          }
-        }
-        // Prevent grain and ore from having the same number
-        if (this.mapDefinition === normalMap) {
-          if (
-            this.hasGlobalGrainOreNumberConflict(newHexTile, newHexTile.number)
-          ) {
-            invalid = true;
-          }
-        } else if (this.mapDefinition === expandedMap) {
-          if (
-            this.hasAdjacentGrainOreNumberConflict(
-              newHexTile,
-              newHexTile.number
-            )
-          ) {
-            invalid = true;
-          }
+        // Prevent dense resource clusters (ADD HERE)
+        if (this.hasDenseResourceCluster(newHexTile)) {
+          invalid = true;
         }
 
+        //Prevent any adjacent tiles from having the same number
         if (this.hasAdjacentNumberConflict(newHexTile, newHexTile.number)) {
+          invalid = true;
+        }
+
+        // Allow only one wood/clay duplicate pair
+        if (this.hasTooManyWoodClayDuplicates(newHexTile, newHexTile.number)) {
+          invalid = true;
+        }
+
+        // Prevent grain/ore same number globally
+        if (this.hasTooManyGrainOreDuplicates(newHexTile, newHexTile.number)) {
           invalid = true;
         }
 
         if (!invalid) {
           this.hexTiles.push(newHexTile);
           this.coordToTile[newCoords.toString()] = newHexTile;
+
+          // remove used resource from pool
+          tileTypes.splice(bestIndex, 1);
+
           placed = true;
         } else {
           tileCoordinates.push(newCoords);
@@ -529,62 +556,59 @@ CatanMap.prototype.hasClayWoodConflict = function (tile) {
   return false;
 };
 
-CatanMap.prototype.hasAdjacentWoodClayNumberConflict = function (tile, number) {
-  if (tile.resourceType !== "wood" && tile.resourceType !== "clay")
-    return false;
+CatanMap.prototype.hasDenseResourceCluster = function (tile) {
   const adjacent = this.getAdjacentTiles(tile);
+
+  let sameCount = 0;
+
   for (let adj of adjacent) {
-    if (
-      (adj.resourceType === "wood" || adj.resourceType === "clay") &&
-      adj.number === number
-    ) {
-      return true;
+    if (adj.resourceType === tile.resourceType) {
+      sameCount++;
     }
   }
-  return false;
+
+  // Block if 2 or more same-type neighbors
+  return sameCount >= 2;
 };
 
-CatanMap.prototype.hasGlobalWoodClayNumberConflict = function (tile, number) {
-  if (tile.resourceType !== "wood" && tile.resourceType !== "clay")
+CatanMap.prototype.hasTooManyWoodClayDuplicates = function (tile, number) {
+  if (tile.resourceType !== "wood" && tile.resourceType !== "clay") {
     return false;
+  }
+
+  let duplicateCount = 0;
+
   for (let t of this.hexTiles) {
     if (
       (t.resourceType === "wood" || t.resourceType === "clay") &&
       t.number === number
     ) {
-      return true;
+      duplicateCount++;
     }
   }
-  return false;
+
+  // allow only two matching pair
+  return duplicateCount >= 2;
 };
 
-CatanMap.prototype.hasAdjacentGrainOreNumberConflict = function (tile, number) {
-  if (tile.resourceType !== "grain" && tile.resourceType !== "ore")
+CatanMap.prototype.hasTooManyGrainOreDuplicates = function (tile, number) {
+  if (tile.resourceType !== "grain" && tile.resourceType !== "ore") {
     return false;
-  const adjacent = this.getAdjacentTiles(tile);
-  for (let adj of adjacent) {
-    if (
-      (adj.resourceType === "grain" || adj.resourceType === "ore") &&
-      adj.number === number
-    ) {
-      return true;
-    }
   }
-  return false;
-};
 
-CatanMap.prototype.hasGlobalGrainOreNumberConflict = function (tile, number) {
-  if (tile.resourceType !== "grain" && tile.resourceType !== "ore")
-    return false;
+  let duplicateCount = 0;
+
   for (let t of this.hexTiles) {
     if (
       (t.resourceType === "grain" || t.resourceType === "ore") &&
       t.number === number
     ) {
-      return true;
+      duplicateCount++;
     }
   }
-  return false;
+
+  // allow only two matching pair
+  return duplicateCount >= 2;
 };
 
 CatanMap.prototype.hasAdjacentNumberConflict = function (tile, number) {
@@ -592,16 +616,6 @@ CatanMap.prototype.hasAdjacentNumberConflict = function (tile, number) {
   const adjacent = this.getAdjacentTiles(tile);
   for (let adj of adjacent) {
     if (adj.number === number) {
-      return true;
-    }
-  }
-  return false;
-};
-
-CatanMap.prototype.hasHighlyProductiveNeighbors = function (tile) {
-  var adjacentTiles = this.getAdjacentTiles(tile);
-  for (var i = 0; i < adjacentTiles.length; i += 1) {
-    if (adjacentTiles[i].isHighlyProductive()) {
       return true;
     }
   }
@@ -666,7 +680,7 @@ HexTile.prototype.drawBase = function () {
   drawingContext.beginPath();
   drawingContext.moveTo(
     this.xCenter + size * Math.sin(angleOffset),
-    this.yCenter - size * Math.cos(angleOffset)
+    this.yCenter - size * Math.cos(angleOffset),
   );
   // Move clockwise and draw hexagon
   var newAngle;
@@ -674,7 +688,7 @@ HexTile.prototype.drawBase = function () {
     newAngle = (i * Math.PI) / 3;
     drawingContext.lineTo(
       this.xCenter + size * Math.sin(newAngle + angleOffset),
-      this.yCenter - size * Math.cos(newAngle + angleOffset)
+      this.yCenter - size * Math.cos(newAngle + angleOffset),
     );
   }
   drawingContext.closePath();
@@ -691,7 +705,7 @@ HexTile.prototype.drawBase = function () {
       this.xCenter - size,
       this.yCenter - dy,
       2 * size,
-      2 * dy
+      2 * dy,
     );
   } else {
     drawingContext.fill();
@@ -711,7 +725,7 @@ HexTile.prototype.drawNumber = function () {
     0.375 * size,
     0,
     2 * Math.PI,
-    false
+    false,
   );
   drawingContext.closePath();
 
@@ -730,7 +744,7 @@ HexTile.prototype.drawNumber = function () {
   drawingContext.fillText(
     this.number.toString(),
     this.xCenter,
-    this.yCenter + Math.ceil((0.85 * fontSizePt) / 2)
+    this.yCenter + Math.ceil((0.85 * fontSizePt) / 2),
   );
 };
 
